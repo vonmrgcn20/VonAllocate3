@@ -12,7 +12,15 @@ import {
   serverTimestamp,
   Firestore
 } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json';
+const firebaseConfig = {
+  apiKey: "AIzaSyBrU-_1TX45i-Fvg0isMM6i5-9lcuKZ2fc",
+  authDomain: "vonallocate3.firebaseapp.com",
+  projectId: "vonallocate3",
+  storageBucket: "vonallocate3.firebasestorage.app",
+  messagingSenderId: "379546006147",
+  appId: "1:379546006147:web:6eb47e4b781b25fdf2e1b6",
+  measurementId: "G-MEJ2GEJCJB",
+};
 
 export enum OperationType {
   CREATE = 'create',
@@ -44,13 +52,9 @@ const app: FirebaseApp = getApps().length > 0 ? getApp() : initializeApp(firebas
 
 let dbInstance: Firestore;
 try {
-  dbInstance = initializeFirestore(
-    app,
-    { experimentalAutoDetectLongPolling: true },
-    firebaseConfig.firestoreDatabaseId
-  );
+  dbInstance = initializeFirestore(app, { experimentalAutoDetectLongPolling: true });
 } catch {
-  dbInstance = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  dbInstance = getFirestore(app);
 }
 
 export const db: Firestore = dbInstance;
