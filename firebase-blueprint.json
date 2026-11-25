@@ -1,0 +1,64 @@
+{
+  "entities": {
+    "UserWorkspace": {
+      "title": "UserWorkspace",
+      "description": "Authenticated user's private weekly budget allocation, priority debts, To Buy categories and items, goals, and saved QRPh snapshots.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID matching the document ID.",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User workspace display label.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "syncRevision": {
+          "type": "number",
+          "description": "Monotonically incrementing synchronization revision counter."
+        },
+        "updatedByDevice": {
+          "type": "string",
+          "description": "Ephemeral device session identifier that performed the latest write.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp recorded at workspace creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp recorded on each workspace update."
+        },
+        "budgetState": {
+          "type": "object",
+          "description": "Native structured map containing banks, fixedItems, variableCategories, debts, goals, toBuyCategories, toBuyItems, savedAllocations, and activityLog."
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "syncRevision",
+        "updatedByDevice",
+        "createdAt",
+        "updatedAt",
+        "budgetState"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserWorkspace"
+      },
+      "description": "Per-user private budget workspace strictly readable and writable only by the verified owner matching userId."
+    }
+  }
+}

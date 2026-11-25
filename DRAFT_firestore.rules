@@ -1,0 +1,132 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidBudgetMap(b) {
+      return b is map
+        && b.keys().size() >= 10
+        && b.keys().size() <= 45
+        && b.syncRevision is number
+        && b.syncRevision >= 1
+        && b.banks is list
+        && b.banks.size() <= 50
+        && (b.banks.size() == 0 || b.banks[0] is map)
+        && b.fixedItems is list
+        && b.fixedItems.size() <= 200
+        && (b.fixedItems.size() == 0 || b.fixedItems[0] is map)
+        && b.variableCategories is list
+        && b.variableCategories.size() <= 50
+        && (b.variableCategories.size() == 0 || b.variableCategories[0] is map)
+        && b.debts is list
+        && b.debts.size() <= 200
+        && (b.debts.size() == 0 || b.debts[0] is map)
+        && b.goals is list
+        && b.goals.size() <= 200
+        && (b.goals.size() == 0 || b.goals[0] is map)
+        && b.toBuyCategories is list
+        && b.toBuyCategories.size() <= 100
+        && (b.toBuyCategories.size() == 0 || b.toBuyCategories[0] is map)
+        && b.toBuyItems is list
+        && b.toBuyItems.size() <= 500
+        && (b.toBuyItems.size() == 0 || b.toBuyItems[0] is map)
+        && b.savedAllocations is list
+        && b.savedAllocations.size() <= 260
+        && (b.savedAllocations.size() == 0 || b.savedAllocations[0] is map)
+        && b.activityLog is list
+        && b.activityLog.size() <= 100
+        && (b.activityLog.size() == 0 || b.activityLog[0] is map);
+    }
+
+    function isValidUserWorkspace(data, userId) {
+      return data.keys().hasAll([
+          'uid',
+          'displayName',
+          'syncRevision',
+          'updatedByDevice',
+          'createdAt',
+          'updatedAt',
+          'budgetState'
+        ])
+        && data.keys().hasOnly([
+          'uid',
+          'displayName',
+          'syncRevision',
+          'updatedByDevice',
+          'createdAt',
+          'updatedAt',
+          'budgetState'
+        ])
+        && data.uid is string
+        && data.uid == userId
+        && data.uid == request.auth.uid
+        && isValidId(data.uid)
+        && data.displayName is string
+        && data.displayName.size() >= 1
+        && data.displayName.size() <= 80
+        && data.syncRevision is number
+        && data.syncRevision >= 1
+        && data.updatedByDevice is string
+        && data.updatedByDevice.size() >= 1
+        && data.updatedByDevice.size() <= 64
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp
+        && isValidBudgetMap(data.budgetState);
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+
+      allow create: if isOwner(userId)
+        && isValidId(userId)
+        && isValidUserWorkspace(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isOwner(userId)
+        && isValidId(userId)
+        && isValidUserWorkspace(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName',
+          'syncRevision',
+          'updatedByDevice',
+          'updatedAt',
+          'budgetState'
+        ]);
+
+      allow delete: if isOwner(userId) && isValidId(userId);
+    }
+  }
+}
