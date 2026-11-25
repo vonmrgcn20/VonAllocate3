@@ -3679,7 +3679,11 @@ npm run dist</div>
       if (dot) dot.className = `w-2 h-2 rounded-full shrink-0 ${cls}`;
       if (mDot) mDot.className = `w-1.5 h-1.5 rounded-full shrink-0 ${cls}`;
       if (text) text.textContent = labelText;
-      if (mText) mText.textContent = state === 'live' ? 'Live' : (state === 'syncing' ? 'Sync...' : 'Offline');
+      if (mText) {
+        mText.textContent = state === 'live'
+          ? 'Live'
+          : (state === 'syncing' ? 'Sync...' : (labelText === 'Rules Blocked' ? 'Rules' : 'Offline'));
+      }
       if (drawerSub) drawerSub.textContent = labelText;
       if (sidebarSub) sidebarSub.textContent = labelText;
     }
@@ -3687,18 +3691,128 @@ npm run dist</div>
     function formatFirebaseDiagnosticToast(err) {
       const code = (err && err.code) ? String(err.code) : lastFirebaseErrorCode;
       if (code === 'permission-denied' || String(err?.message || '').includes('permission')) {
-        return 'Firestore permission denied — check Firestore Rules deployment.';
+        return 'Firestore permission denied in vonallocate3 — paste & Publish firestore.rules in Firebase Console.';
+      }
+      if (code === 'bridge-unavailable') {
+        return 'Could not load Firebase SDK — check network or build output.';
       }
       return 'Firebase sync issue — changes saved locally & will auto-sync.';
     }
 
-    async function waitForFirebaseBridge(timeoutMs = 8000) {
+    const FIREBASE_FALLBACK_CONFIG = {
+      apiKey: 'AIzaSyBrU-_1TX45i-Fvg0isMM6i5-9lcuKZ2fc',
+      authDomain: 'vonallocate3.firebaseapp.com',
+      projectId: 'vonallocate3',
+      storageBucket: 'vonallocate3.firebasestorage.app',
+      messagingSenderId: '379546006147',
+      appId: '1:379546006147:web:6eb47e4b781b25fdf2e1b6',
+      measurementId: 'G-MEJ2GEJCJB'
+    };
+
+    let cdnFirebaseBridgePromise = null;
+
+    async function loadCdnFirebaseFallback() {
+      if (window.__firebaseBridge && window.__firebaseBridge.db) {
+        return window.__firebaseBridge;
+      }
+      if (cdnFirebaseBridgePromise) return cdnFirebaseBridgePromise;
+
+      cdnFirebaseBridgePromise = (async () => {
+        try {
+          const [appMod, authMod, fsMod] = await Promise.all([
+            import('https://www.gstatic.com/firebasejs/13.4.0/firebase-app.js'),
+            import('https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js'),
+            import('https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js')
+          ]);
+
+          const app = appMod.getApps().length > 0
+            ? appMod.getApp()
+            : appMod.initializeApp(FIREBASE_FALLBACK_CONFIG);
+
+          let dbInstance;
+          try {
+            dbInstance = fsMod.initializeFirestore(app, { experimentalAutoDetectLongPolling: true });
+          } catch (_e) {
+            dbInstance = fsMod.getFirestore(app);
+          }
+
+          const auth = authMod.getAuth(app);
+          const OperationType = {
+            CREATE: 'create',
+            UPDATE: 'update',
+            DELETE: 'delete',
+            LIST: 'list',
+            GET: 'get',
+            WRITE: 'write'
+          };
+
+          const handleFirestoreError = (error, operationType, path) => {
+            const errInfo = {
+              error: error instanceof Error ? error.message : String(error),
+              authInfo: {
+                userId: auth.currentUser ? auth.currentUser.uid : null,
+                email: auth.currentUser ? auth.currentUser.email : null,
+                emailVerified: auth.currentUser ? auth.currentUser.emailVerified : null,
+                isAnonymous: auth.currentUser ? auth.currentUser.isAnonymous : null,
+                tenantId: auth.currentUser ? auth.currentUser.tenantId : null,
+                providerInfo: (auth.currentUser && Array.isArray(auth.currentUser.providerData))
+                  ? auth.currentUser.providerData.map(p => ({ providerId: p.providerId, email: p.email }))
+                  : []
+              },
+              operationType,
+              path
+            };
+            console.error('Firestore Error: ', JSON.stringify(errInfo));
+            throw new Error(JSON.stringify(errInfo));
+          };
+
+          const testConnection = async () => {
+            try {
+              await fsMod.getDocFromServer(fsMod.doc(dbInstance, 'test', 'connection'));
+              return true;
+            } catch (error) {
+              if (error instanceof Error && error.message.includes('the client is offline')) {
+                console.error('Please check your Firebase configuration.');
+                return false;
+              }
+              return true;
+            }
+          };
+
+          window.__firebaseBridge = {
+            app,
+            db: dbInstance,
+            firebaseConfig: FIREBASE_FALLBACK_CONFIG,
+            OperationType,
+            handleFirestoreError,
+            testConnection,
+            doc: fsMod.doc,
+            getDoc: fsMod.getDoc,
+            getDocFromServer: fsMod.getDocFromServer,
+            setDoc: fsMod.setDoc,
+            updateDoc: fsMod.updateDoc,
+            onSnapshot: fsMod.onSnapshot,
+            serverTimestamp: fsMod.serverTimestamp
+          };
+          return window.__firebaseBridge;
+        } catch (cdnErr) {
+          console.warn('CDN Firebase fallback failed:', cdnErr);
+          cdnFirebaseBridgePromise = null;
+          return null;
+        }
+      })();
+
+      return cdnFirebaseBridgePromise;
+    }
+
+    async function waitForFirebaseBridge(timeoutMs = 1200) {
       let waited = 0;
-      while (!window.__firebaseBridge && waited < timeoutMs) {
+      while (!window.__firebaseBridge && !window.__viteBridgeLoadFailed && waited < timeoutMs) {
         await new Promise(r => setTimeout(r, 50));
         waited += 50;
       }
-      return window.__firebaseBridge || null;
+      if (window.__firebaseBridge) return window.__firebaseBridge;
+      return await loadCdnFirebaseFallback();
     }
 
     function invokeFirestoreErrorHandler(bridge, err, opType, docPath) {
@@ -3717,13 +3831,20 @@ npm run dist</div>
         try {
           const bridge = await waitForFirebaseBridge();
           if (!bridge || !bridge.db) {
+            lastFirebaseErrorCode = 'bridge-unavailable';
             updateFirebaseStatusUI('local', 'Local Mode');
             firebaseReadyPromise = null;
             return false;
           }
 
           firestoreDB = bridge.db;
-          await bridge.testConnection();
+          const onlineOk = await bridge.testConnection();
+          if (!onlineOk) {
+            lastFirebaseErrorCode = 'client-offline';
+            updateFirebaseStatusUI('local', 'Offline');
+            firebaseReadyPromise = null;
+            return false;
+          }
           lastFirebaseErrorCode = '';
           return true;
         } catch (err) {
@@ -4123,39 +4244,7 @@ npm run dist</div>
             renderAll();
           }
 
-          if (unsubscribeUserSnapshot) unsubscribeUserSnapshot();
-          unsubscribeUserSnapshot = bridge.onSnapshot(
-            workspaceRef,
-            (docSnap) => {
-              if (!docSnap.exists()) return;
-              hasRemoteWorkspaceDoc = true;
-              const data = docSnap.data();
-              if (!data || !data.budgetState || typeof data.budgetState !== 'object') return;
-              if (data.updatedByDevice === DEVICE_CLIENT_ID) return;
-
-              const incomingRev = Number(data.syncRevision) || 0;
-              if (incomingRev > 0 && incomingRev <= lastAppliedSyncRevision) return;
-
-              try {
-                const incomingState = normalizeAppState(data.budgetState);
-                lastAppliedSyncRevision = incomingRev || (lastAppliedSyncRevision + 1);
-                incomingState.syncRevision = lastAppliedSyncRevision;
-                appState = incomingState;
-                hasPendingCloudPush = false;
-                saveLocalShadowCache(false);
-                renderAll();
-                if (qrphModalState.isOpen) renderQrPhModal();
-                updateFirebaseStatusUI('live', 'Synced Live');
-              } catch (e) {
-                console.warn('Realtime merge parse error:', e);
-              }
-            },
-            (snapErr) => {
-              lastFirebaseErrorCode = snapErr && snapErr.code ? String(snapErr.code) : 'snapshot-error';
-              invokeFirestoreErrorHandler(bridge, snapErr, bridge.OperationType.GET, docPath);
-              updateFirebaseStatusUI('local', snapErr?.code === 'permission-denied' ? 'Rules Blocked' : 'Local Mode');
-            }
-          );
+          attachWorkspaceRealtimeListener(workspaceId);
         } catch (err) {
           lastFirebaseErrorCode = err && err.code ? String(err.code) : 'load-error';
           invokeFirestoreErrorHandler(bridge, err, bridge.OperationType.GET, docPath);
@@ -4174,6 +4263,53 @@ npm run dist</div>
         hasCompletedInitialLoad = true;
         renderAll();
       }
+    }
+
+    function attachWorkspaceRealtimeListener(workspaceId) {
+      const bridge = window.__firebaseBridge;
+      const cleanId = sanitizeWorkspaceId(workspaceId);
+      if (!bridge || !firestoreDB || !cleanId || cleanId.length < 2) return;
+      const workspaceRef = getWorkspaceDocRef(cleanId);
+      if (!workspaceRef) return;
+      const docPath = `workspaces/${cleanId}`;
+
+      if (unsubscribeUserSnapshot) {
+        unsubscribeUserSnapshot();
+        unsubscribeUserSnapshot = null;
+      }
+
+      unsubscribeUserSnapshot = bridge.onSnapshot(
+        workspaceRef,
+        (docSnap) => {
+          if (!docSnap.exists()) return;
+          hasRemoteWorkspaceDoc = true;
+          const data = docSnap.data();
+          if (!data || !data.budgetState || typeof data.budgetState !== 'object') return;
+          if (data.updatedByDevice === DEVICE_CLIENT_ID) return;
+
+          const incomingRev = Number(data.syncRevision) || 0;
+          if (incomingRev > 0 && incomingRev <= lastAppliedSyncRevision) return;
+
+          try {
+            const incomingState = normalizeAppState(data.budgetState);
+            lastAppliedSyncRevision = incomingRev || (lastAppliedSyncRevision + 1);
+            incomingState.syncRevision = lastAppliedSyncRevision;
+            appState = incomingState;
+            hasPendingCloudPush = false;
+            saveLocalShadowCache(false);
+            renderAll();
+            if (qrphModalState.isOpen) renderQrPhModal();
+            updateFirebaseStatusUI('live', 'Synced Live');
+          } catch (e) {
+            console.warn('Realtime merge parse error:', e);
+          }
+        },
+        (snapErr) => {
+          lastFirebaseErrorCode = snapErr && snapErr.code ? String(snapErr.code) : 'snapshot-error';
+          invokeFirestoreErrorHandler(bridge, snapErr, bridge.OperationType.GET, docPath);
+          updateFirebaseStatusUI('local', snapErr?.code === 'permission-denied' ? 'Rules Blocked' : 'Local Mode');
+        }
+      );
     }
 
     function applyCanonicalBankAssignments(list, lookupMap) {
@@ -4461,6 +4597,9 @@ npm run dist</div>
             renderAll();
             if (qrphModalState.isOpen) renderQrPhModal();
             updateFirebaseStatusUI('live', 'Firebase Live');
+            if (!unsubscribeUserSnapshot) {
+              attachWorkspaceRealtimeListener(cleanId);
+            }
             if (!silent) showToast('Pulled & synced latest data from Firebase Live!');
             return;
           }
@@ -4469,6 +4608,9 @@ npm run dist</div>
         }
 
         const pushed = await pushAppStateToFirebase(cleanId);
+        if (pushed && !unsubscribeUserSnapshot) {
+          attachWorkspaceRealtimeListener(cleanId);
+        }
         renderAll();
         if (!silent) {
           if (pushed) {
@@ -10103,6 +10245,6 @@ app.on('window-all-closed', () => {
     });
   </script>
   <div id="root"></div>
-  <script type="module" src="/src/main.tsx"></script>
+  <script type="module" src="/src/main.tsx" onerror="window.__viteBridgeLoadFailed = true;"></script>
 </body>
 </html>
