@@ -1,13 +1,5 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
-import {
-  getAuth,
-  GoogleAuthProvider,
-  signInWithPopup,
-  signOut,
-  onAuthStateChanged,
-  Auth,
-  User
-} from 'firebase/auth';
+import { getAuth, Auth } from 'firebase/auth';
 import {
   initializeFirestore,
   getFirestore,
@@ -63,8 +55,6 @@ try {
 
 export const db: Firestore = dbInstance;
 export const auth: Auth = getAuth(app);
-export const googleProvider = new GoogleAuthProvider();
-googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 export function handleFirestoreError(
   error: unknown,
@@ -74,11 +64,11 @@ export function handleFirestoreError(
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
+      userId: auth.currentUser?.uid ?? null,
+      email: auth.currentUser?.email ?? null,
+      emailVerified: auth.currentUser?.emailVerified ?? null,
+      isAnonymous: auth.currentUser?.isAnonymous ?? null,
+      tenantId: auth.currentUser?.tenantId ?? null,
       providerInfo:
         auth.currentUser?.providerData?.map((provider) => ({
           providerId: provider.providerId,
@@ -108,15 +98,10 @@ export async function testConnection(): Promise<boolean> {
 export type FirebaseBridge = {
   app: FirebaseApp;
   db: Firestore;
-  auth: Auth;
-  googleProvider: GoogleAuthProvider;
   firebaseConfig: typeof firebaseConfig;
   OperationType: typeof OperationType;
   handleFirestoreError: typeof handleFirestoreError;
   testConnection: typeof testConnection;
-  signInWithGoogle: () => Promise<User>;
-  signOutFirebase: () => Promise<void>;
-  onAuthStateChanged: typeof onAuthStateChanged;
   doc: typeof doc;
   getDoc: typeof getDoc;
   getDocFromServer: typeof getDocFromServer;
@@ -129,20 +114,10 @@ export type FirebaseBridge = {
 export const firebaseBridge: FirebaseBridge = {
   app,
   db,
-  auth,
-  googleProvider,
   firebaseConfig,
   OperationType,
   handleFirestoreError,
   testConnection,
-  async signInWithGoogle() {
-    const result = await signInWithPopup(auth, googleProvider);
-    return result.user;
-  },
-  async signOutFirebase() {
-    await signOut(auth);
-  },
-  onAuthStateChanged,
   doc,
   getDoc,
   getDocFromServer,

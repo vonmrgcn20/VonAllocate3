@@ -472,16 +472,16 @@
         </span>
       </div>
 
-      <div class="p-6 space-y-3.5">
+      <div class="p-6 space-y-4">
         <div id="auth-error" class="hidden p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-medium flex items-center gap-2">
           <i data-lucide="alert-circle" class="w-4 h-4 shrink-0"></i>
-          <span id="auth-error-text">Sign-in failed.</span>
+          <span id="auth-error-text">Unable to open workspace.</span>
         </div>
 
         <div class="space-y-1">
           <h2 class="text-sm font-bold">Automatic Firebase Cloud Sync</h2>
           <p class="text-xs leading-relaxed" style="color: var(--text-secondary)">
-            Both Google Sign-In and your Vhon Demo Account automatically sync every change live to Firestore across your phone &amp; laptop.
+            Open your Vhon Demo Account or enter a workspace name to sync all changes live across your phone &amp; laptop.
           </p>
         </div>
 
@@ -492,19 +492,24 @@
           <i data-lucide="arrow-right" class="w-4 h-4 shrink-0"></i>
         </button>
 
-        <button id="google-signin-btn" type="button" onclick="loginWithGoogle()"
-          class="w-full py-2.5 px-4 rounded-xl app-subcard hover:border-blue-500/50 text-xs font-semibold transition flex items-center justify-center gap-2 cursor-pointer">
-          <i data-lucide="cloud" class="w-4 h-4 text-emerald-400 shrink-0"></i>
-          <span>Continue with Google Account</span>
-        </button>
-
-        <div class="pt-1 text-center">
-          <button id="offline-fallback-btn" type="button" onclick="loginOfflineFallback()"
-            class="text-[11px] font-medium opacity-70 hover:opacity-100 underline underline-offset-2 transition cursor-pointer"
-            style="color: var(--text-muted)">
-            Use offline local mode (syncs once connected)
-          </button>
+        <div class="relative py-0.5 flex items-center">
+          <div class="flex-grow border-t app-divider"></div>
+          <span class="px-3 text-[10px] font-bold uppercase tracking-wider" style="color: var(--text-muted)">or workspace</span>
+          <div class="flex-grow border-t app-divider"></div>
         </div>
+
+        <form id="workspace-login-form" onsubmit="handleWorkspaceLogin(event)" class="space-y-2.5">
+          <div class="relative">
+            <i data-lucide="folder-sync" class="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2"></i>
+            <input id="auth-workspace-id" type="text" autocomplete="username" placeholder="Workspace name (e.g. von)"
+              class="w-full pl-10 pr-4 py-2.5 rounded-xl app-input text-xs sm:text-sm" />
+          </div>
+          <button id="workspace-signin-btn" type="submit"
+            class="w-full py-2.5 px-4 rounded-xl app-subcard hover:border-blue-500/50 text-xs font-semibold transition flex items-center justify-center gap-2 cursor-pointer">
+            <i data-lucide="cloud" class="w-4 h-4 text-emerald-400 shrink-0"></i>
+            <span>Open Workspace &amp; Auto-Sync</span>
+          </button>
+        </form>
       </div>
     </div>
   </div>
@@ -2624,10 +2629,10 @@ npm run dist</div>
 
   <!-- ==================== MAIN APP SCRIPT (Firebase Bridge via /src/main.tsx) ==================== -->
   <script>
-    const COOKIE_DEMO_KEY = 'von_allocator_demo_v5';
-    const COOKIE_DEMO_LABEL_KEY = 'von_allocator_demo_label_v5';
+    const COOKIE_WORKSPACE_KEY = 'von_allocator_workspace_v6';
     const COOKIE_THEME_KEY = 'von_allocator_theme_v4';
     const LOCAL_BACKUP_STORAGE_KEY = 'von_allocator_cache_v5';
+    const DEMO_WORKSPACE_ID = 'von';
     const DEVICE_CLIENT_ID = 'dev_' + Math.random().toString(36).slice(2, 11);
     const CURRENT_ALLOCATION_SCHEMA_VERSION = '2026-11-24-catfood-banks-v1';
 
@@ -2635,15 +2640,11 @@ npm run dist</div>
     let currentDisplayName = 'Vhon';
     let currentPage = 'allocation';
     let firestoreDB = null;
-    let firebaseAuthUser = null;
     let firebaseReadyPromise = null;
-    let isAuthInitialized = false;
-    let isDemoSession = false;
     let hasRemoteWorkspaceDoc = false;
     let hasPendingCloudPush = false;
     let lastFirebaseErrorCode = '';
     let unsubscribeUserSnapshot = null;
-    let authStateUnsubscribe = null;
     let cloudSyncDebounceTimer = null;
     let lastAppliedSyncRevision = -1;
 
@@ -3686,21 +3687,9 @@ npm run dist</div>
     function formatFirebaseDiagnosticToast(err) {
       const code = (err && err.code) ? String(err.code) : lastFirebaseErrorCode;
       if (code === 'permission-denied' || String(err?.message || '').includes('permission')) {
-        return 'Firestore permission denied — sign in with a verified Google account.';
+        return 'Firestore permission denied — check Firestore Rules deployment.';
       }
-      if (code === 'auth/popup-closed-by-user') {
-        return 'Google sign-in popup was closed before finishing.';
-      }
-      if (code === 'auth/popup-blocked') {
-        return 'Popup blocked by browser — please allow popups for Google Sign-In.';
-      }
-      if (code === 'auth/operation-not-allowed' || code === 'auth/unauthorized-domain') {
-        return 'Google Sign-In is not enabled or authorized for this domain.';
-      }
-      if (isDemoSession || !firebaseAuthUser) {
-        return 'Local Demo mode — sign in with Google to enable Firebase Live sync.';
-      }
-      return 'Firebase sync issue — check internet connection and retry.';
+      return 'Firebase sync issue — changes saved locally & will auto-sync.';
     }
 
     async function waitForFirebaseBridge(timeoutMs = 8000) {
@@ -3727,16 +3716,13 @@ npm run dist</div>
       firebaseReadyPromise = (async () => {
         try {
           const bridge = await waitForFirebaseBridge();
-          if (!bridge || !bridge.db || !bridge.auth) {
+          if (!bridge || !bridge.db) {
             updateFirebaseStatusUI('local', 'Local Mode');
             firebaseReadyPromise = null;
             return false;
           }
 
           firestoreDB = bridge.db;
-          if (bridge.auth.currentUser) {
-            firebaseAuthUser = bridge.auth.currentUser;
-          }
           await bridge.testConnection();
           lastFirebaseErrorCode = '';
           return true;
@@ -3752,11 +3738,20 @@ npm run dist</div>
       return firebaseReadyPromise;
     }
 
-    function getUserDataDocRef(uid) {
+    function sanitizeWorkspaceId(raw) {
+      const cleaned = String(raw || '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, '_')
+        .replace(/[^a-z0-9_-]/g, '');
+      return cleaned.slice(0, 64);
+    }
+
+    function getWorkspaceDocRef(workspaceId) {
       const bridge = window.__firebaseBridge;
-      const cleanUid = String(uid || '').trim();
-      if (!bridge || !firestoreDB || !cleanUid) return null;
-      return bridge.doc(firestoreDB, 'users', cleanUid);
+      const cleanId = sanitizeWorkspaceId(workspaceId);
+      if (!bridge || !firestoreDB || !cleanId || cleanId.length < 2) return null;
+      return bridge.doc(firestoreDB, 'workspaces', cleanId);
     }
 
     // ==================== COLLAPSIBLE SIDEBAR & HEADER CALENDAR POPOVER ====================
@@ -3926,7 +3921,7 @@ npm run dist</div>
       applyTheme(currentlyDark ? 'light' : 'dark');
     }
 
-    // ==================== GOOGLE SIGN-IN & AUTO-SYNC DEMO ACCOUNT ====================
+    // ==================== DIRECT WORKSPACE & DEMO ACCOUNT AUTO-SYNC ====================
     function showAuthError(message) {
       const errBox = document.getElementById('auth-error');
       const errText = document.getElementById('auth-error-text');
@@ -3954,7 +3949,7 @@ npm run dist</div>
     function saveLocalShadowCache(dirtyFlag) {
       try {
         const payload = {
-          uid: currentUser || 'demo-local',
+          workspaceId: currentUser || DEMO_WORKSPACE_ID,
           displayName: currentDisplayName || 'Vhon',
           syncRevision: Math.max(1, Number(appState.syncRevision) || 1),
           dirty: !!dirtyFlag,
@@ -3967,112 +3962,23 @@ npm run dist</div>
       }
     }
 
-    async function signInWithFirebasePopupOrReuse(asDemoProfile = false) {
-      const ok = await initRealtimeFirebase();
-      const bridge = window.__firebaseBridge;
-      if (!ok || !bridge) {
-        throw new Error('Firebase SDK is not ready yet.');
-      }
-
-      let user = bridge.auth && bridge.auth.currentUser ? bridge.auth.currentUser : null;
-      if (!user) {
-        user = await bridge.signInWithGoogle();
-      }
-      if (!user || !user.uid) {
-        throw new Error('Google sign-in did not return an account.');
-      }
-      if (user.emailVerified === false) {
-        throw new Error('Please use a verified Google account.');
-      }
-
-      eraseCookie(COOKIE_DEMO_KEY);
-      if (asDemoProfile) {
-        setCookie(COOKIE_DEMO_LABEL_KEY, '1', 365);
-      } else {
-        eraseCookie(COOKIE_DEMO_LABEL_KEY);
-      }
-      isDemoSession = false;
-      firebaseAuthUser = user;
-      await enterAuthenticatedWorkspace(user, asDemoProfile ? 'Vhon (Demo)' : null);
-    }
-
-    async function loginWithGoogle() {
+    async function handleWorkspaceLogin(e) {
+      if (e) e.preventDefault();
       hideAuthError();
-      const btn = document.getElementById('google-signin-btn');
-      if (btn) {
-        btn.disabled = true;
-        btn.innerHTML = '<span>Connecting Google...</span>';
+      const input = document.getElementById('auth-workspace-id');
+      const rawName = (input && input.value ? input.value : '').trim();
+      const cleanId = sanitizeWorkspaceId(rawName);
+      if (!cleanId || cleanId.length < 2) {
+        showAuthError('Enter a workspace name (at least 2 letters or numbers, e.g. von).');
+        return;
       }
-
-      try {
-        await signInWithFirebasePopupOrReuse(false);
-      } catch (err) {
-        lastFirebaseErrorCode = err && err.code ? String(err.code) : 'auth-error';
-        const msg = formatFirebaseDiagnosticToast(err);
-        showAuthError(msg);
-        showToast(msg);
-      } finally {
-        if (btn) {
-          btn.disabled = false;
-          btn.innerHTML = '<i data-lucide="cloud" class="w-4 h-4 shrink-0 text-emerald-400"></i><span>Continue with Google Account</span>';
-          if (window.lucide) lucide.createIcons();
-        }
-      }
+      const displayLabel = rawName.slice(0, 80) || cleanId;
+      await openWorkspaceAndAutoSync(cleanId, displayLabel);
     }
 
     async function loginWithDemoAccount() {
       hideAuthError();
-      const demoBtn = document.getElementById('demo-signin-btn');
-      if (demoBtn) {
-        demoBtn.disabled = true;
-        demoBtn.innerHTML = '<span>Syncing Demo Account...</span>';
-      }
-
-      try {
-        await signInWithFirebasePopupOrReuse(true);
-        showToast('Demo Account (Vhon) connected & auto-syncing with Firebase Live!');
-      } catch (err) {
-        lastFirebaseErrorCode = err && err.code ? String(err.code) : 'auth-error';
-        const msg = formatFirebaseDiagnosticToast(err);
-        showAuthError(msg);
-        showToast(msg);
-      } finally {
-        if (demoBtn) {
-          demoBtn.disabled = false;
-          demoBtn.innerHTML = '<i data-lucide="sparkles" class="w-4 h-4 shrink-0"></i><span>Demo Account (Vhon) &middot; Auto-Sync</span><i data-lucide="arrow-right" class="w-4 h-4 shrink-0"></i>';
-          if (window.lucide) lucide.createIcons();
-        }
-      }
-    }
-
-    async function loginOfflineFallback() {
-      hideAuthError();
-      if (unsubscribeUserSnapshot) {
-        unsubscribeUserSnapshot();
-        unsubscribeUserSnapshot = null;
-      }
-      isDemoSession = true;
-      firebaseAuthUser = null;
-      hasRemoteWorkspaceDoc = false;
-      currentUser = 'demo-local';
-      currentDisplayName = 'Vhon (Offline)';
-      setCookie(COOKIE_DEMO_KEY, '1', 30);
-
-      applySessionShellUI(currentDisplayName);
-      updateFirebaseStatusUI('local', 'Offline · Tap to Sync');
-
-      const cached = readLocalShadowCache();
-      hasCompletedInitialLoad = true;
-      if (cached && cached.state) {
-        appState = normalizeAppState(cached.state);
-        hasPendingCloudPush = !!cached.dirty;
-      } else {
-        appState = createDefaultAppState();
-      }
-      renderAll();
-      navigateTo('allocation');
-      if (window.lucide) lucide.createIcons();
-      showToast('Offline mode active — tap Sync anytime to push changes to Firebase.');
+      await openWorkspaceAndAutoSync(DEMO_WORKSPACE_ID, 'Vhon (Demo)');
     }
 
     function applySessionShellUI(displayName) {
@@ -4093,29 +3999,31 @@ npm run dist</div>
       setSidebarCollapsed(false);
     }
 
-    async function enterAuthenticatedWorkspace(user, preferredLabel = null) {
-      if (!user || !user.uid) return;
-      isDemoSession = false;
-      firebaseAuthUser = user;
-      const useDemoLabel = preferredLabel || (getCookie(COOKIE_DEMO_LABEL_KEY) === '1' ? 'Vhon (Demo)' : null);
-      const rawName = (useDemoLabel || user.displayName || user.email || 'Vhon').trim();
-      const displayName = rawName.slice(0, 80) || 'Vhon';
+    async function openWorkspaceAndAutoSync(workspaceId, displayName) {
+      const cleanId = sanitizeWorkspaceId(workspaceId);
+      if (!cleanId || cleanId.length < 2) {
+        showAuthError('Invalid workspace name.');
+        return;
+      }
 
-      if (currentUser === user.uid && hasCompletedInitialLoad) {
-        currentDisplayName = displayName;
-        applySessionShellUI(displayName);
+      const safeLabel = (displayName || cleanId).trim().slice(0, 80) || 'Vhon';
+      setCookie(COOKIE_WORKSPACE_KEY, JSON.stringify({ id: cleanId, name: safeLabel }), 365);
+
+      if (currentUser === cleanId && hasCompletedInitialLoad) {
+        currentDisplayName = safeLabel;
+        applySessionShellUI(safeLabel);
         if (hasPendingCloudPush) {
-          await pushAppStateToFirebase(user.uid);
+          await pushAppStateToFirebase(cleanId);
         }
         return;
       }
 
-      currentUser = user.uid;
-      currentDisplayName = displayName;
-      applySessionShellUI(displayName);
+      currentUser = cleanId;
+      currentDisplayName = safeLabel;
+      applySessionShellUI(safeLabel);
       updateFirebaseStatusUI('syncing', 'Syncing Cloud...');
 
-      await loadUserDataAndAttachRealtime(user.uid, displayName);
+      await loadUserDataAndAttachRealtime(cleanId, safeLabel);
       navigateTo('allocation');
       if (window.lucide) lucide.createIcons();
     }
@@ -4125,32 +4033,20 @@ npm run dist</div>
         clearTimeout(cloudSyncDebounceTimer);
         cloudSyncDebounceTimer = null;
       }
-      if (hasPendingCloudPush && currentUser && firebaseAuthUser && !isDemoSession) {
+      if (hasPendingCloudPush && currentUser) {
         await pushAppStateToFirebase(currentUser);
       }
       if (unsubscribeUserSnapshot) {
         unsubscribeUserSnapshot();
         unsubscribeUserSnapshot = null;
       }
-      eraseCookie(COOKIE_DEMO_KEY);
-      eraseCookie(COOKIE_DEMO_LABEL_KEY);
-      isDemoSession = false;
+      eraseCookie(COOKIE_WORKSPACE_KEY);
       hasRemoteWorkspaceDoc = false;
       hasPendingCloudPush = false;
       currentUser = null;
       currentDisplayName = 'Vhon';
-      firebaseAuthUser = null;
       lastAppliedSyncRevision = -1;
       hasCompletedInitialLoad = false;
-
-      const bridge = window.__firebaseBridge;
-      if (bridge && bridge.auth && bridge.auth.currentUser) {
-        try {
-          await bridge.signOutFirebase();
-        } catch (err) {
-          console.warn('Sign out warning:', err);
-        }
-      }
 
       updateFirebaseStatusUI('local', 'Signed Out');
       const appShell = document.getElementById('app-shell');
@@ -4161,7 +4057,7 @@ npm run dist</div>
       if (window.lucide) lucide.createIcons();
     }
 
-    async function loadUserDataAndAttachRealtime(uid, displayName) {
+    async function loadUserDataAndAttachRealtime(workspaceId, displayName) {
       hasCompletedInitialLoad = false;
       hasRemoteWorkspaceDoc = false;
       appState = createDefaultAppState();
@@ -4173,32 +4069,32 @@ npm run dist</div>
         localBackup &&
         localBackup.dirty &&
         localBackup.state &&
-        (localBackup.uid === uid || localBackup.uid === 'demo-local')
+        localBackup.workspaceId === workspaceId
       );
 
-      if (cloudOk && firestoreDB && bridge && firebaseAuthUser && firebaseAuthUser.uid === uid) {
-        const userDocRef = getUserDataDocRef(uid);
-        const docPath = `users/${uid}`;
+      if (cloudOk && firestoreDB && bridge) {
+        const workspaceRef = getWorkspaceDocRef(workspaceId);
+        const docPath = `workspaces/${workspaceId}`;
 
         try {
-          const initialSnap = await bridge.getDoc(userDocRef);
+          const initialSnap = await bridge.getDoc(workspaceRef);
 
           if (initialSnap.exists()) {
             hasRemoteWorkspaceDoc = true;
             const docData = initialSnap.data() || {};
             const remoteRev = Math.max(1, Number(docData.syncRevision) || 1);
 
-            if (hasPendingLocalBackup && remoteRev <= 1 && (Number(localBackup.syncRevision) || 0) > remoteRev) {
+            if (hasPendingLocalBackup && (Number(localBackup.syncRevision) || 0) > remoteRev) {
               appState = normalizeAppState(localBackup.state);
-              appState.syncRevision = Math.max(2, Number(localBackup.syncRevision) || 2);
+              appState.syncRevision = Math.max(remoteRev + 1, Number(localBackup.syncRevision) || (remoteRev + 1));
               lastAppliedSyncRevision = appState.syncRevision;
               hasCompletedInitialLoad = true;
               renderAll();
-              await pushAppStateToFirebase(uid);
+              await pushAppStateToFirebase(workspaceId);
             } else {
               const rawBudget = (docData.budgetState && typeof docData.budgetState === 'object')
                 ? docData.budgetState
-                : (docData.payload ? JSON.parse(docData.payload) : {});
+                : {};
               const normalized = normalizeAppState(rawBudget);
               appState = normalized;
               lastAppliedSyncRevision = Math.max(1, Number(docData.syncRevision || appState.syncRevision) || 1);
@@ -4223,13 +4119,13 @@ npm run dist</div>
             }
             hasCompletedInitialLoad = true;
             recordAccountActivity('Cloud Sync Enabled', `Auto-sync active for ${displayName}`, false);
-            await pushAppStateToFirebase(uid);
+            await pushAppStateToFirebase(workspaceId);
             renderAll();
           }
 
           if (unsubscribeUserSnapshot) unsubscribeUserSnapshot();
           unsubscribeUserSnapshot = bridge.onSnapshot(
-            userDocRef,
+            workspaceRef,
             (docSnap) => {
               if (!docSnap.exists()) return;
               hasRemoteWorkspaceDoc = true;
@@ -4264,7 +4160,7 @@ npm run dist</div>
           lastFirebaseErrorCode = err && err.code ? String(err.code) : 'load-error';
           invokeFirestoreErrorHandler(bridge, err, bridge.OperationType.GET, docPath);
           updateFirebaseStatusUI('local', err?.code === 'permission-denied' ? 'Rules Blocked' : 'Local Mode');
-          if (localBackup && localBackup.state && localBackup.uid === uid) {
+          if (localBackup && localBackup.state && localBackup.workspaceId === workspaceId) {
             appState = normalizeAppState(localBackup.state);
           }
           hasCompletedInitialLoad = true;
@@ -4272,6 +4168,9 @@ npm run dist</div>
           showToast(formatFirebaseDiagnosticToast(err));
         }
       } else {
+        if (localBackup && localBackup.state && localBackup.workspaceId === workspaceId) {
+          appState = normalizeAppState(localBackup.state);
+        }
         hasCompletedInitialLoad = true;
         renderAll();
       }
@@ -4436,25 +4335,26 @@ npm run dist</div>
       return clean;
     }
 
-    async function pushAppStateToFirebase(uid) {
+    async function pushAppStateToFirebase(workspaceId) {
       const bridge = window.__firebaseBridge;
-      if (!uid || !firestoreDB || !bridge || !firebaseAuthUser || firebaseAuthUser.uid !== uid) {
+      const cleanId = sanitizeWorkspaceId(workspaceId);
+      if (!cleanId || !firestoreDB || !bridge) {
         return false;
       }
 
-      const userDocRef = getUserDataDocRef(uid);
-      if (!userDocRef) return false;
-      const docPath = `users/${uid}`;
+      const workspaceRef = getWorkspaceDocRef(cleanId);
+      if (!workspaceRef) return false;
+      const docPath = `workspaces/${cleanId}`;
       const rev = Math.max(1, Number(appState.syncRevision) || 1);
       appState.syncRevision = rev;
-      const safeDisplayName = (currentDisplayName || firebaseAuthUser.displayName || firebaseAuthUser.email || 'Vhon').trim().slice(0, 80) || 'Vhon';
+      const safeDisplayName = (currentDisplayName || cleanId || 'Vhon').trim().slice(0, 80) || 'Vhon';
       const safeBudgetMap = buildSanitizedBudgetMap(appState);
 
       try {
         updateFirebaseStatusUI('syncing', 'Syncing...');
 
         if (hasRemoteWorkspaceDoc) {
-          await bridge.updateDoc(userDocRef, {
+          await bridge.updateDoc(workspaceRef, {
             displayName: safeDisplayName,
             syncRevision: rev,
             updatedByDevice: DEVICE_CLIENT_ID,
@@ -4462,8 +4362,8 @@ npm run dist</div>
             budgetState: safeBudgetMap
           });
         } else {
-          await bridge.setDoc(userDocRef, {
-            uid: uid,
+          await bridge.setDoc(workspaceRef, {
+            workspaceId: cleanId,
             displayName: safeDisplayName,
             syncRevision: rev,
             updatedByDevice: DEVICE_CLIENT_ID,
@@ -4480,11 +4380,10 @@ npm run dist</div>
         updateFirebaseStatusUI('live', 'Firebase Live');
         return true;
       } catch (err) {
-        // Handle missing remote doc on update fallback
         if (hasRemoteWorkspaceDoc && err && err.code === 'not-found') {
           try {
-            await bridge.setDoc(userDocRef, {
-              uid: uid,
+            await bridge.setDoc(workspaceRef, {
+              workspaceId: cleanId,
               displayName: safeDisplayName,
               syncRevision: rev,
               updatedByDevice: DEVICE_CLIENT_ID,
@@ -4519,8 +4418,6 @@ npm run dist</div>
       hasPendingCloudPush = true;
       saveLocalShadowCache(true);
 
-      if (isDemoSession || !firebaseAuthUser) return;
-
       if (cloudSyncDebounceTimer) clearTimeout(cloudSyncDebounceTimer);
       if (immediate) {
         pushAppStateToFirebase(currentUser);
@@ -4532,12 +4429,6 @@ npm run dist</div>
     }
 
     async function pullAndSyncFromFirebaseLive(silent = false) {
-      if (isDemoSession || !firebaseAuthUser) {
-        if (!silent) {
-          await loginWithDemoAccount();
-        }
-        return;
-      }
       if (!currentUser) return;
 
       const ok = await initRealtimeFirebase();
@@ -4547,11 +4438,12 @@ npm run dist</div>
         return;
       }
 
-      const docPath = `users/${currentUser}`;
+      const cleanId = sanitizeWorkspaceId(currentUser);
+      const docPath = `workspaces/${cleanId}`;
       try {
         updateFirebaseStatusUI('syncing', 'Syncing Live...');
-        const userDocRef = getUserDataDocRef(currentUser);
-        const remoteSnap = await bridge.getDoc(userDocRef);
+        const workspaceRef = getWorkspaceDocRef(cleanId);
+        const remoteSnap = await bridge.getDoc(workspaceRef);
 
         if (remoteSnap.exists()) {
           hasRemoteWorkspaceDoc = true;
@@ -4576,7 +4468,7 @@ npm run dist</div>
           hasRemoteWorkspaceDoc = false;
         }
 
-        const pushed = await pushAppStateToFirebase(currentUser);
+        const pushed = await pushAppStateToFirebase(cleanId);
         renderAll();
         if (!silent) {
           if (pushed) {
@@ -10159,13 +10051,13 @@ app.on('window-all-closed', () => {
         clearTimeout(cloudSyncDebounceTimer);
         cloudSyncDebounceTimer = null;
       }
-      if (hasPendingCloudPush && currentUser && firebaseAuthUser && !isDemoSession) {
+      if (hasPendingCloudPush && currentUser) {
         void pushAppStateToFirebase(currentUser);
       }
     }
 
     window.addEventListener('online', () => {
-      if (currentUser && firebaseAuthUser && !isDemoSession) {
+      if (currentUser) {
         void pullAndSyncFromFirebaseLive(true);
       }
     });
@@ -10173,7 +10065,7 @@ app.on('window-all-closed', () => {
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
         flushPendingFirebaseSync();
-      } else if (document.visibilityState === 'visible' && currentUser && firebaseAuthUser && !isDemoSession) {
+      } else if (document.visibilityState === 'visible' && currentUser) {
         if (hasPendingCloudPush) {
           flushPendingFirebaseSync();
         } else {
@@ -10192,34 +10084,22 @@ app.on('window-all-closed', () => {
       applyTheme(savedTheme);
       if (window.lucide) lucide.createIcons();
 
-      const ok = await initRealtimeFirebase();
-      const bridge = window.__firebaseBridge;
+      await initRealtimeFirebase();
 
-      if (ok && bridge && bridge.auth) {
-        if (authStateUnsubscribe) authStateUnsubscribe();
-        authStateUnsubscribe = bridge.onAuthStateChanged(bridge.auth, async (user) => {
-          isAuthInitialized = true;
-          if (user && user.uid && user.emailVerified !== false) {
-            eraseCookie(COOKIE_DEMO_KEY);
-            await enterAuthenticatedWorkspace(user);
-          } else if (getCookie(COOKIE_DEMO_KEY) === '1' && !currentUser) {
-            await loginOfflineFallback();
-          } else if (!isDemoSession) {
-            currentUser = null;
-            firebaseAuthUser = null;
-            const appShell = document.getElementById('app-shell');
-            const authView = document.getElementById('auth-view');
-            if (appShell) appShell.classList.add('hidden');
-            if (authView) authView.classList.remove('hidden');
-            if (window.lucide) lucide.createIcons();
+      const savedCookie = getCookie(COOKIE_WORKSPACE_KEY);
+      if (savedCookie) {
+        try {
+          const parsed = JSON.parse(savedCookie);
+          if (parsed && parsed.id) {
+            await openWorkspaceAndAutoSync(parsed.id, parsed.name || parsed.id);
+            return;
           }
-        });
-      } else {
-        isAuthInitialized = true;
-        if (getCookie(COOKIE_DEMO_KEY) === '1') {
-          await loginOfflineFallback();
+        } catch (_e) {
+          eraseCookie(COOKIE_WORKSPACE_KEY);
         }
       }
+
+      if (window.lucide) lucide.createIcons();
     });
   </script>
   <div id="root"></div>
