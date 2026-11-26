@@ -9984,6 +9984,9 @@ npm run dist</div>
       if (window.lucide) lucide.createIcons();
       if (totalAffected > 0) {
         showToast(`Bulk Notepad: ${createdItemIds.length} added${replacedCount ? `, ${replacedCount} replaced` : ''}!`);
+        if (createdItemIds.length > 0) {
+          highlightAndScrollToBuyItem(createdItemIds[0]);
+        }
       } else {
         showToast('Cancelled importing duplicate items.');
       }
@@ -11005,6 +11008,25 @@ npm run dist</div>
       }
     }
 
+    function highlightAndScrollToBuyItem(itemId) {
+      if (!itemId) return;
+      if (currentPage !== 'to-buy') {
+        navigateTo('to-buy');
+      } else {
+        renderToBuyPage();
+      }
+      setTimeout(() => {
+        const el = document.querySelector(`[data-tobuy-id="${itemId}"]`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.classList.add('ring-2', 'ring-blue-500', 'bg-blue-500/15', 'shadow-2xl', 'scale-[1.01]', 'transition-all', 'duration-500');
+          setTimeout(() => {
+            el.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-500/15', 'shadow-2xl', 'scale-[1.01]', 'transition-all', 'duration-500');
+          }, 2400);
+        }
+      }, 120);
+    }
+
     function handleAddToBuySubmit(e) {
       e.preventDefault();
       ensureToBuyCategoriesInitialized();
@@ -11101,6 +11123,7 @@ npm run dist</div>
       showToast(createdGoal
         ? `Added "${title}" & sent to ${createdGoal.category} Vault!`
         : `Added "${title}" to ${catLabel}!`);
+      highlightAndScrollToBuyItem(newItem.id);
     }
 
     function toggleToBuyChecked(itemId) {
