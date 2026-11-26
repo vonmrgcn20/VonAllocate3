@@ -2005,6 +2005,30 @@
 
         <!-- Categorized Checklist Container (List Tree or Notion Board Columns) -->
         <div id="tobuy-cards-list" class="space-y-4"></div>
+
+        <!-- Sticky Bulk Selection Action Bar -->
+        <div id="tobuy-bulk-action-bar" class="hidden sticky bottom-20 md:bottom-6 z-25 app-card rounded-2xl p-3 sm:p-4 shadow-2xl border border-blue-500/40 flex flex-wrap items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-3 duration-200" style="background: var(--bg-surface)">
+          <div class="flex items-center gap-2.5 min-w-0">
+            <span id="tobuy-bulk-count-badge" class="px-2.5 py-1 rounded-xl bg-blue-600 text-white text-xs font-bold mono-num">0 selected</span>
+            <span class="text-xs font-semibold truncate" style="color: var(--text-secondary)">Drag any selected item to a category/subgroup or move/delete here</span>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button type="button" onclick="openToBuyMoveMenu('bulk', '', this, event)"
+              class="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap">
+              <i data-lucide="folder-input" class="w-4 h-4"></i>
+              <span>Move Selected...</span>
+            </button>
+            <button type="button" onclick="bulkDeleteToBuySelected()"
+              class="px-3.5 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/35 text-rose-400 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap">
+              <i data-lucide="trash-2" class="w-4 h-4"></i>
+              <span>Delete Selected</span>
+            </button>
+            <button type="button" onclick="clearToBuySelection()"
+              class="px-3 py-2 rounded-xl app-subcard text-xs font-semibold hover:text-rose-400 transition cursor-pointer whitespace-nowrap">
+              Clear
+            </button>
+          </div>
+        </div>
       </section>
 
       <!-- ==================== PAGE 4: SAVED & QRPH TRANSFERS ==================== -->
@@ -3165,8 +3189,8 @@ npm run dist</div>
     let isDebtAddPanelOpen = false;
     let toBuyClearConfirmPending = false;
     let toBuyClearConfirmTimer = null;
-    let toBuyDragState = { type: null, id: null, sourceCatId: null, sourceSubId: null };
-    let toBuyTouchDragState = { type: null, id: null, sourceCatId: null, sourceSubId: null };
+    let toBuyDragState = { type: null, id: null, ids: [], sourceCatId: null, sourceSubId: null };
+    let toBuyTouchDragState = { type: null, id: null, ids: [], sourceCatId: null, sourceSubId: null };
     let toBuyMovePopover = { open: false, mode: null, targetId: null, targetSubId: '', search: '' };
     let toBuyCustomizePopoverOpen = false;
     let draggedToBuyId = null;
@@ -10992,6 +11016,70 @@ npm run dist</div>
       showToast(`Moved "${item.title}" out of Fixed Expenses into ${g ? g.category : 'Wants'} Vault!`);
     }
 
+    let selectedToBuyIds = new Set();
+
+    function toggleToBuySelected(itemId, event) {
+      if (!itemId) return;
+      if (event && event.target && event.target.closest('button, input, select, a, .tobuy-drag-handle')) {
+        return;
+      }
+      if (window.getSelection && window.getSelection().toString().trim().length > 0) {
+        return;
+      }
+      if (selectedToBuyIds.has(itemId)) {
+        selectedToBuyIds.delete(itemId);
+      } else {
+        selectedToBuyIds.add(itemId);
+      }
+      renderToBuyPage();
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function clearToBuySelection() {
+      selectedToBuyIds.clear();
+      renderToBuyPage();
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function selectAllToBuyItems() {
+      const all = appState.toBuyItems || [];
+      all.forEach(t => selectedToBuyIds.add(t.id));
+      renderToBuyPage();
+      if (window.lucide) lucide.createIcons();
+    }
+
+    function bulkMoveToBuySelected(targetCatId, targetSubId = '') {
+      if (selectedToBuyIds.size === 0) return;
+      const idsToMove = (appState.toBuyItems || []).filter(t => selectedToBuyIds.has(t.id)).map(t => t.id);
+      moveMultipleToBuyTasksToTarget(idsToMove, targetCatId, null, false, targetSubId);
+    }
+
+    function bulkDeleteToBuySelected() {
+      if (selectedToBuyIds.size === 0) return;
+      const count = selectedToBuyIds.size;
+      const idsToDelete = Array.from(selectedToBuyIds);
+
+      idsToDelete.forEach(id => {
+        const item = (appState.toBuyItems || []).find(t => t.id === id);
+        if (item) {
+          removeToBuyFromFixedExpenses(item);
+          removeToBuyFromGoalVault(item, true);
+        }
+      });
+
+      appState.toBuyItems = (appState.toBuyItems || []).filter(t => !selectedToBuyIds.has(t.id));
+      editingToBuyIds.clear();
+      selectedToBuyIds.clear();
+
+      recordAccountActivity('Bulk Deleted To Buy Items', `Deleted ${count} To Buy items`, false);
+      persistUserData(true);
+      renderToBuyPage();
+      if (currentPage === 'goals') renderGoalsPage();
+      if (currentPage === 'allocation') renderAllocationPage();
+      if (window.lucide) lucide.createIcons();
+      showToast(`Deleted ${count} selected items.`);
+    }
+
     function updateToBuyAddPreview() {
       const priceVal = evaluateMathExpression(document.getElementById('tobuy-input-price')?.value);
       const deadlineVal = document.getElementById('tobuy-input-deadline')?.value || '';
@@ -11015,6 +11103,7 @@ npm run dist</div>
       } else {
         renderToBuyPage();
       }
+      if (window.lucide) lucide.createIcons();
       setTimeout(() => {
         if (window.lucide) lucide.createIcons();
         const el = document.querySelector(`[data-tobuy-id="${itemId}"]`);
@@ -11023,6 +11112,7 @@ npm run dist</div>
           el.classList.add('ring-2', 'ring-blue-500', 'bg-blue-500/15', 'shadow-2xl', 'scale-[1.01]', 'transition-all', 'duration-500');
           setTimeout(() => {
             el.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-500/15', 'shadow-2xl', 'scale-[1.01]', 'transition-all', 'duration-500');
+            if (window.lucide) lucide.createIcons();
           }, 2400);
         }
       }, 120);
@@ -11292,22 +11382,23 @@ npm run dist</div>
       if (window.lucide) lucide.createIcons();
     }
 
-    // Move a task to a specific category + subcategory (and optionally before/after a target task)
+    // Move single or multiple tasks to a specific category + subcategory (and optionally before/after a target task)
     function moveToBuyTaskToTarget(sourceId, targetCatId, targetItemId = null, insertAfter = false, targetSubId = '') {
-      if (!sourceId) return;
+      const ids = Array.isArray(sourceId) ? sourceId : [sourceId];
+      moveMultipleToBuyTasksToTarget(ids, targetCatId, targetItemId, insertAfter, targetSubId);
+    }
+
+    function moveMultipleToBuyTasksToTarget(sourceIds, targetCatId, targetItemId = null, insertAfter = false, targetSubId = '') {
+      if (!Array.isArray(sourceIds) || sourceIds.length === 0) return;
       const list = appState.toBuyItems || [];
-      const fromIdx = list.findIndex(t => t.id === sourceId);
-      if (fromIdx === -1) return;
+      const validSourceIds = sourceIds.filter(id => list.some(t => t.id === id));
+      if (validSourceIds.length === 0) return;
 
-      const [moved] = list.splice(fromIdx, 1);
-      const prevCatId = moved.categoryId;
-      const prevSubId = moved.subcategoryId || '';
-
-      if (targetCatId) {
-        moved.categoryId = targetCatId;
+      if (targetItemId && validSourceIds.includes(targetItemId)) {
+        targetItemId = null;
       }
 
-      const destCat = (appState.toBuyCategories || []).find(c => c.id === moved.categoryId);
+      const destCat = (appState.toBuyCategories || []).find(c => c.id === targetCatId);
       let resolvedSubId = targetSubId || '';
       let destSub = null;
       if (resolvedSubId && destCat && Array.isArray(destCat.subcategories)) {
@@ -11316,47 +11407,72 @@ npm run dist</div>
       } else {
         resolvedSubId = '';
       }
-      moved.subcategoryId = resolvedSubId;
 
-      if (targetItemId && targetItemId !== sourceId) {
-        let toIdx = list.findIndex(t => t.id === targetItemId);
+      const movingItems = [];
+      const remainingItems = [];
+      list.forEach(t => {
+        if (validSourceIds.includes(t.id)) {
+          movingItems.push(t);
+        } else {
+          remainingItems.push(t);
+        }
+      });
+
+      if (movingItems.length === 0) return;
+
+      movingItems.forEach(item => {
+        if (targetCatId) item.categoryId = targetCatId;
+        item.subcategoryId = resolvedSubId;
+      });
+
+      if (targetItemId) {
+        let toIdx = remainingItems.findIndex(t => t.id === targetItemId);
         if (toIdx === -1) {
-          list.push(moved);
+          remainingItems.push(...movingItems);
         } else {
           if (insertAfter) toIdx += 1;
-          list.splice(toIdx, 0, moved);
+          remainingItems.splice(toIdx, 0, ...movingItems);
         }
       } else {
         let lastIdx = -1;
-        for (let i = list.length - 1; i >= 0; i--) {
-          if (list[i].categoryId === moved.categoryId && (list[i].subcategoryId || '') === moved.subcategoryId) {
+        for (let i = remainingItems.length - 1; i >= 0; i--) {
+          if (remainingItems[i].categoryId === targetCatId && (remainingItems[i].subcategoryId || '') === resolvedSubId) {
             lastIdx = i;
             break;
           }
         }
         if (lastIdx === -1) {
-          for (let i = list.length - 1; i >= 0; i--) {
-            if (list[i].categoryId === moved.categoryId) {
+          for (let i = remainingItems.length - 1; i >= 0; i--) {
+            if (remainingItems[i].categoryId === targetCatId) {
               lastIdx = i;
               break;
             }
           }
         }
         if (lastIdx >= 0) {
-          list.splice(lastIdx + 1, 0, moved);
+          remainingItems.splice(lastIdx + 1, 0, ...movingItems);
         } else {
-          list.push(moved);
+          remainingItems.push(...movingItems);
         }
       }
+
+      appState.toBuyItems = remainingItems;
 
       if (destCat && destCat.collapsed) destCat.collapsed = false;
       if (destSub && destSub.collapsed) destSub.collapsed = false;
 
-      if ((prevCatId !== moved.categoryId || prevSubId !== moved.subcategoryId) && destCat) {
+      if (destCat) {
         const destLabel = destSub ? `${destCat.name} › ${destSub.name}` : destCat.name;
-        recordAccountActivity('Moved To Buy Item', `Moved "${moved.title}" to ${destLabel}`, false);
-        showToast(`Moved "${moved.title}" to ${destLabel}!`);
+        if (movingItems.length === 1) {
+          recordAccountActivity('Moved To Buy Item', `Moved "${movingItems[0].title}" to ${destLabel}`, false);
+          showToast(`Moved "${movingItems[0].title}" to ${destLabel}!`);
+        } else {
+          recordAccountActivity('Moved To Buy Items', `Moved ${movingItems.length} items to ${destLabel}`, false);
+          showToast(`Moved ${movingItems.length} items to ${destLabel}!`);
+        }
       }
+
+      selectedToBuyIds.clear();
 
       persistUserData(true);
       renderToBuyPage();
@@ -11685,6 +11801,10 @@ npm run dist</div>
         moveToBuyTaskToTarget(targetId, destCatId, null, false, destSubId);
         return;
       }
+      if (actionType === 'bulk_move') {
+        bulkMoveToBuySelected(destCatId, destSubId);
+        return;
+      }
       if (actionType === 'nest_cat') {
         nestCategoryAsSubcategory(targetId, destCatId);
         return;
@@ -11725,6 +11845,8 @@ npm run dist</div>
         headerTitle = 'Nest inside category…';
       } else if (mode === 'subcategory') {
         headerTitle = 'Move subcategory…';
+      } else if (mode === 'bulk') {
+        headerTitle = `Move ${selectedToBuyIds.size} selected items to…`;
       }
 
       let rowsHtml = '';
@@ -11771,7 +11893,7 @@ npm run dist</div>
           }).join('');
         }
       } else {
-        const actionType = mode === 'draft' ? 'draft_pick' : (mode === 'edit' ? 'edit_pick' : 'move_item');
+        const actionType = mode === 'draft' ? 'draft_pick' : (mode === 'edit' ? 'edit_pick' : (mode === 'bulk' ? 'bulk_move' : 'move_item'));
         if (categories.length === 0) {
           rowsHtml += `<div class="px-3 py-4 text-center text-sm" style="color: var(--text-muted)">No categories yet. Add one above first.</div>`;
         } else {
@@ -11826,6 +11948,7 @@ npm run dist</div>
           ${rowsHtml}
         </div>
       `;
+      if (window.lucide) lucide.createIcons();
     }
 
     function setToBuyPromoteDropzoneVisible(show) {
@@ -11862,30 +11985,58 @@ npm run dist</div>
       }
       e.stopPropagation();
       closeToBuyMoveMenu();
+
+      let idsToDrag = [itemId];
+      if (selectedToBuyIds.has(itemId) && selectedToBuyIds.size > 1) {
+        idsToDrag = (appState.toBuyItems || []).filter(t => selectedToBuyIds.has(t.id)).map(t => t.id);
+        if (!idsToDrag.includes(itemId)) idsToDrag.push(itemId);
+      }
+
       const item = (appState.toBuyItems || []).find(t => t.id === itemId);
       draggedToBuyId = itemId;
       toBuyDragState = {
         type: 'task',
         id: itemId,
+        ids: idsToDrag,
         sourceCatId: item ? item.categoryId : null,
         sourceSubId: item ? (item.subcategoryId || '') : ''
       };
+
       const rowEl = e.currentTarget.closest('[data-tobuy-id]') || document.querySelector(`[data-tobuy-id="${itemId}"]`);
       if (e.dataTransfer) {
         e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', `task:${itemId}`);
-        if (rowEl && e.dataTransfer.setDragImage) {
+        e.dataTransfer.setData('text/plain', `tasks:${idsToDrag.join(',')}`);
+        if (idsToDrag.length > 1) {
+          try {
+            const dragGhost = document.createElement('div');
+            dragGhost.style.position = 'fixed';
+            dragGhost.style.top = '-9999px';
+            dragGhost.style.left = '-9999px';
+            dragGhost.className = 'px-3.5 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold shadow-2xl flex items-center gap-2 pointer-events-none z-[9999]';
+            dragGhost.innerHTML = `<span>Moving ${idsToDrag.length} items</span>`;
+            document.body.appendChild(dragGhost);
+            e.dataTransfer.setDragImage(dragGhost, 24, 18);
+            setTimeout(() => { if (dragGhost.parentNode) dragGhost.remove(); }, 150);
+          } catch (_e) {}
+        } else if (rowEl && e.dataTransfer.setDragImage) {
           try { e.dataTransfer.setDragImage(rowEl, 24, 18); } catch (_e) {}
         }
       }
-      if (rowEl) setTimeout(() => rowEl.classList.add('dragging'), 0);
+
+      setTimeout(() => {
+        idsToDrag.forEach(id => {
+          const el = document.querySelector(`[data-tobuy-id="${id}"]`);
+          if (el) el.classList.add('dragging');
+        });
+      }, 0);
     }
 
     function handleToBuyDragOver(e, targetId) {
       if (toBuyDragState.type !== 'task') return;
       e.preventDefault();
       e.stopPropagation();
-      if (!toBuyDragState.id || toBuyDragState.id === targetId) return;
+      const ids = toBuyDragState.ids && toBuyDragState.ids.length > 0 ? toBuyDragState.ids : (toBuyDragState.id ? [toBuyDragState.id] : []);
+      if (ids.includes(targetId)) return;
 
       const card = e.currentTarget;
       if (!card) return;
@@ -11922,25 +12073,38 @@ npm run dist</div>
       }
 
       const rawTransfer = e.dataTransfer ? e.dataTransfer.getData('text/plain') : '';
-      const srcId = toBuyDragState.id || (rawTransfer.startsWith('task:') ? rawTransfer.slice(5) : draggedToBuyId);
+      let ids = toBuyDragState.ids;
+      if (!ids || ids.length === 0) {
+        if (rawTransfer.startsWith('tasks:')) {
+          ids = rawTransfer.slice(6).split(',').filter(Boolean);
+        } else if (rawTransfer.startsWith('task:')) {
+          ids = [rawTransfer.slice(5)];
+        } else if (toBuyDragState.id) {
+          ids = [toBuyDragState.id];
+        } else if (draggedToBuyId) {
+          ids = [draggedToBuyId];
+        }
+      }
+
       const targetItem = (appState.toBuyItems || []).find(t => t.id === targetId);
       const targetCatId = targetItem ? targetItem.categoryId : null;
       const targetSubId = targetItem ? (targetItem.subcategoryId || '') : '';
 
-      toBuyDragState = { type: null, id: null, sourceCatId: null, sourceSubId: null };
+      toBuyDragState = { type: null, id: null, ids: [], sourceCatId: null, sourceSubId: null };
       draggedToBuyId = null;
       clearAllToBuyDragHighlights();
 
-      if (srcId && targetItem && srcId !== targetId) {
-        moveToBuyTaskToTarget(srcId, targetCatId, targetId, insertAfter, targetSubId);
+      if (ids && ids.length > 0 && targetItem && !ids.includes(targetId)) {
+        moveMultipleToBuyTasksToTarget(ids, targetCatId, targetId, insertAfter, targetSubId);
       }
     }
 
     function handleToBuyDragEnd(e) {
       if (e) e.stopPropagation();
-      toBuyDragState = { type: null, id: null, sourceCatId: null, sourceSubId: null };
+      toBuyDragState = { type: null, id: null, ids: [], sourceCatId: null, sourceSubId: null };
       draggedToBuyId = null;
       clearAllToBuyDragHighlights();
+      if (window.lucide) lucide.createIcons();
     }
 
     // ---- HTML5 Drag & Drop Handlers: Subcategories (Reorder, Move across Categories, Promote to Category, Accept Task Drops) ----
@@ -12015,12 +12179,23 @@ npm run dist</div>
       e.stopPropagation();
 
       if (activeType === 'task') {
-        const activeId = toBuyDragState.id || (rawTransfer.includes(':') ? rawTransfer.split(':')[1] : null);
-        toBuyDragState = { type: null, id: null, sourceCatId: null, sourceSubId: null };
+        let ids = toBuyDragState.ids;
+        if (!ids || ids.length === 0) {
+          if (rawTransfer.startsWith('tasks:')) {
+            ids = rawTransfer.slice(6).split(',').filter(Boolean);
+          } else if (rawTransfer.startsWith('task:')) {
+            ids = [rawTransfer.slice(5)];
+          } else if (toBuyDragState.id) {
+            ids = [toBuyDragState.id];
+          } else if (draggedToBuyId) {
+            ids = [draggedToBuyId];
+          }
+        }
+        toBuyDragState = { type: null, id: null, ids: [], sourceCatId: null, sourceSubId: null };
         draggedToBuyId = null;
         clearAllToBuyDragHighlights();
-        if (activeId) {
-          moveToBuyTaskToTarget(activeId, catId, null, false, subId);
+        if (ids && ids.length > 0) {
+          moveMultipleToBuyTasksToTarget(ids, catId, null, false, subId);
         }
         return;
       }
@@ -12159,16 +12334,28 @@ npm run dist</div>
       const catZone = panel ? computeCategoryDropZone(panel, e.clientX, e.clientY) : 'after';
 
       const rawTransfer = e.dataTransfer ? e.dataTransfer.getData('text/plain') : '';
-      const activeType = toBuyDragState.type || (rawTransfer.startsWith('cat:') ? 'category' : (rawTransfer.startsWith('sub:') ? 'subcategory' : (rawTransfer.startsWith('task:') ? 'task' : null)));
+      const activeType = toBuyDragState.type || (rawTransfer.startsWith('cat:') ? 'category' : (rawTransfer.startsWith('sub:') ? 'subcategory' : ((rawTransfer.startsWith('task:') || rawTransfer.startsWith('tasks:')) ? 'task' : null)));
+      let ids = toBuyDragState.ids;
+      if (!ids || ids.length === 0) {
+        if (rawTransfer.startsWith('tasks:')) {
+          ids = rawTransfer.slice(6).split(',').filter(Boolean);
+        } else if (rawTransfer.startsWith('task:')) {
+          ids = [rawTransfer.slice(5)];
+        } else if (toBuyDragState.id) {
+          ids = [toBuyDragState.id];
+        } else if (draggedToBuyId) {
+          ids = [draggedToBuyId];
+        }
+      }
       const activeId = toBuyDragState.id || (rawTransfer.includes(':') ? rawTransfer.split(':')[1] : null);
       const srcCatId = toBuyDragState.sourceCatId;
 
-      toBuyDragState = { type: null, id: null, sourceCatId: null, sourceSubId: null };
+      toBuyDragState = { type: null, id: null, ids: [], sourceCatId: null, sourceSubId: null };
       draggedToBuyId = null;
       clearAllToBuyDragHighlights();
 
-      if (activeType === 'task' && activeId) {
-        moveToBuyTaskToTarget(activeId, catId, null, false, '');
+      if (activeType === 'task' && ids && ids.length > 0) {
+        moveMultipleToBuyTasksToTarget(ids, catId, null, false, '');
       } else if (activeType === 'subcategory' && srcCatId && activeId && srcCatId !== catId && catId !== 'uncategorized') {
         moveSubcategoryToCategory(srcCatId, activeId, catId);
       } else if (activeType === 'category' && activeId && activeId !== catId && catId !== 'uncategorized') {
@@ -12189,10 +12376,17 @@ npm run dist</div>
     function handleToBuyTouchStart(e, itemId) {
       if (editingToBuyIds.has(itemId)) return;
       e.stopPropagation();
+      let idsToDrag = [itemId];
+      if (selectedToBuyIds.has(itemId) && selectedToBuyIds.size > 1) {
+        idsToDrag = (appState.toBuyItems || []).filter(t => selectedToBuyIds.has(t.id)).map(t => t.id);
+        if (!idsToDrag.includes(itemId)) idsToDrag.push(itemId);
+      }
       touchDragToBuyId = itemId;
-      toBuyTouchDragState = { type: 'task', id: itemId, sourceCatId: null, sourceSubId: null };
-      const card = document.querySelector(`[data-tobuy-id="${itemId}"]`);
-      if (card) card.classList.add('dragging');
+      toBuyTouchDragState = { type: 'task', id: itemId, ids: idsToDrag, sourceCatId: null, sourceSubId: null };
+      idsToDrag.forEach(id => {
+        const card = document.querySelector(`[data-tobuy-id="${id}"]`);
+        if (card) card.classList.add('dragging');
+      });
     }
 
     function handleToBuyTouchMove(e) {
@@ -12221,7 +12415,8 @@ npm run dist</div>
       }
       if (targetCard) {
         const tId = targetCard.getAttribute('data-tobuy-id');
-        if (tId && tId !== toBuyTouchDragState.id) {
+        const ids = toBuyTouchDragState.ids || [toBuyTouchDragState.id];
+        if (tId && !ids.includes(tId)) {
           const rect = targetCard.getBoundingClientRect();
           targetCard.classList.add(touch.clientY < rect.top + rect.height / 2 ? 'drag-over-top' : 'drag-over-bottom');
         }
@@ -12230,8 +12425,8 @@ npm run dist</div>
 
     function handleToBuyTouchEnd(e) {
       if (toBuyTouchDragState.type !== 'task' || !toBuyTouchDragState.id) return;
-      const srcId = toBuyTouchDragState.id;
-      toBuyTouchDragState = { type: null, id: null, sourceCatId: null, sourceSubId: null };
+      const ids = toBuyTouchDragState.ids && toBuyTouchDragState.ids.length > 0 ? toBuyTouchDragState.ids : [toBuyTouchDragState.id];
+      toBuyTouchDragState = { type: null, id: null, ids: [], sourceCatId: null, sourceSubId: null };
       touchDragToBuyId = null;
 
       const touch = e.changedTouches && e.changedTouches[0];
@@ -12263,10 +12458,10 @@ npm run dist</div>
       }
 
       clearAllToBuyDragHighlights();
-      if (targetItemId && targetItemId !== srcId) {
-        moveToBuyTaskToTarget(srcId, targetCatId, targetItemId, insertAfter, targetSubId);
+      if (targetItemId && !ids.includes(targetItemId)) {
+        moveMultipleToBuyTasksToTarget(ids, targetCatId, targetItemId, insertAfter, targetSubId);
       } else if (targetCatId) {
-        moveToBuyTaskToTarget(srcId, targetCatId, null, false, targetSubId);
+        moveMultipleToBuyTasksToTarget(ids, targetCatId, null, false, targetSubId);
       }
     }
 
@@ -12944,16 +13139,18 @@ npm run dist</div>
         }
       }
 
+      const isSelected = selectedToBuyIds.has(item.id);
       const rowContainerClasses = isBoard
-        ? `tobuy-item-row app-subcard rounded-xl ${isCompact ? 'p-2.5 space-y-2' : 'p-3 space-y-2.5'} min-w-0 ${item.checked ? 'opacity-60' : ''}`
-        : `tobuy-item-row ${isCompact ? 'py-2.5 px-2 space-y-1.5' : 'py-3 px-2.5 space-y-2'} -mx-1 rounded-xl hover:bg-slate-500/[0.06] border-b app-divider last:border-b-0 min-w-0 ${item.checked ? 'opacity-60' : ''}`;
+        ? `tobuy-item-row app-subcard rounded-xl ${isCompact ? 'p-2.5 space-y-2' : 'p-3 space-y-2.5'} min-w-0 transition-all ${item.checked ? 'opacity-60' : ''} ${isSelected ? 'border-2 border-blue-500 bg-blue-500/15 ring-2 ring-blue-500/40 shadow-lg' : ''}`
+        : `tobuy-item-row ${isCompact ? 'py-2.5 px-3 space-y-1.5' : 'py-3 px-3 space-y-2'} rounded-xl hover:bg-slate-500/[0.06] border-b app-divider last:border-b-0 min-w-0 transition-all ${item.checked ? 'opacity-60' : ''} ${isSelected ? 'border-2 border-blue-500 bg-blue-500/15 ring-2 ring-blue-500/40 shadow-md' : ''}`;
 
       return `
         <div data-tobuy-id="${item.id}"
+          onclick="toggleToBuySelected('${item.id}', event)"
           ondragover="handleToBuyDragOver(event, '${item.id}')"
           ondragleave="handleToBuyDragLeave(event)"
           ondrop="handleToBuyDrop(event, '${item.id}')"
-          class="${rowContainerClasses}">
+          class="${rowContainerClasses} cursor-pointer">
 
           <!-- Row 1: Drag Handle (ONLY draggable element!) + Checkbox + Title + Price -->
           <div class="flex items-start gap-2 sm:gap-2.5 min-w-0">
@@ -12963,8 +13160,8 @@ npm run dist</div>
               ontouchstart="handleToBuyTouchStart(event, '${item.id}')"
               ontouchmove="handleToBuyTouchMove(event)"
               ontouchend="handleToBuyTouchEnd(event)"
-              title="Drag to reorder or move to another category"
-              class="tobuy-drag-handle mt-0.5 p-1 -ml-1 rounded-lg text-slate-400 hover:text-blue-400 shrink-0 touch-none">
+              title="${isSelected && selectedToBuyIds.size > 1 ? `Drag ${selectedToBuyIds.size} selected items together to a category or subcategory` : 'Drag to reorder or move to another category'}"
+              class="tobuy-drag-handle mt-0.5 p-1 -ml-1 rounded-lg ${isSelected ? 'text-blue-500 dark:text-blue-400 bg-blue-500/20' : 'text-slate-400 hover:text-blue-400'} shrink-0 touch-none transition">
               <i data-lucide="grip-vertical" class="w-4 h-4"></i>
             </div>
 
@@ -13106,6 +13303,17 @@ npm run dist</div>
       renderToBuyClearAllControls();
       updateToBuyAiLiveStats();
 
+      const bulkBar = document.getElementById('tobuy-bulk-action-bar');
+      const bulkBadge = document.getElementById('tobuy-bulk-count-badge');
+      if (bulkBar && bulkBadge) {
+        if (selectedToBuyIds.size > 0) {
+          bulkBar.classList.remove('hidden');
+          bulkBadge.textContent = `${selectedToBuyIds.size} selected`;
+        } else {
+          bulkBar.classList.add('hidden');
+        }
+      }
+
       const fAll = document.getElementById('tobuy-filter-count-All');
       const fPending = document.getElementById('tobuy-filter-count-Pending');
       const fSynced = document.getElementById('tobuy-filter-count-Synced');
@@ -13202,6 +13410,7 @@ npm run dist</div>
             </p>
           </div>
         `;
+        if (window.lucide) lucide.createIcons();
         return;
       }
 
@@ -13549,6 +13758,7 @@ npm run dist</div>
             </button>
           </div>
         `;
+        if (window.lucide) lucide.createIcons();
         return;
       }
 
@@ -13556,6 +13766,7 @@ npm run dist</div>
       if (toBuyCustomizePopoverOpen) {
         renderToBuyCustomizePopoverContent();
       }
+      if (window.lucide) lucide.createIcons();
     }
 
     document.addEventListener('click', (e) => {
