@@ -11016,6 +11016,7 @@ npm run dist</div>
         renderToBuyPage();
       }
       setTimeout(() => {
+        if (window.lucide) lucide.createIcons();
         const el = document.querySelector(`[data-tobuy-id="${itemId}"]`);
         if (el) {
           el.scrollIntoView({ behavior: 'smooth', block: 'center' });
